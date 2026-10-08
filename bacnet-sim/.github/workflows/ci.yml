@@ -1,0 +1,44 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Integration tests (Linux)
+        if: runner.os == 'Linux'
+        run: BUILD_DIR=build python -m pytest -q tests
+      - name: Integration tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:BUILD_DIR = "build/Release"
+          python -m pytest -q tests
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ASan+UBSan unit tests
+        run: |
+          gcc -std=c11 -g -fsanitize=address,undefined -Ic -c c/bytebuf.c -o bb.o
+          g++ -std=c++17 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -Iinclude -Ic \
+              tests/test_codec.cpp src/bacnet.cpp src/device.cpp bb.o -pthread -o t_asan && ./t_asan
+      - name: TSan unit tests
+        run: |
+          gcc -std=c11 -g -fsanitize=thread -Ic -c c/bytebuf.c -o bbt.o
+          g++ -std=c++17 -g -O1 -fsanitize=thread -Iinclude -Ic \
+              tests/test_codec.cpp src/bacnet.cpp src/device.cpp bbt.o -pthread -o t_tsan && ./t_tsan
